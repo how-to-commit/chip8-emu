@@ -61,8 +61,9 @@ impl Chip8 {
     }
 
     fn fetch_next_instruction(&mut self) -> u16 {
-        let opcode: u16 = (self.memory[self.program_counter as usize] as u16) << 8
-            | self.memory[(self.program_counter + 1) as usize] as u16;
+        let opcode: u16 = 
+            (self.get_ram(self.program_counter) as u16) << 8 
+            | self.get_ram(self.program_counter + 1) as u16;
 
         self.incr_pc();
 
@@ -118,6 +119,10 @@ impl Chip8 {
 
     fn set_reg(&mut self, reg: impl Into<usize>, value: u8) {
         self.v_regs[reg.into()] = value;
+    }
+
+    fn get_ram(&mut self, addr: impl Into<usize>) -> u8 {
+        self.memory[addr.into()]
     }
 
     fn set_pc(&mut self, c: impl Into<usize>) {
@@ -220,19 +225,22 @@ impl Chip8 {
 
         for sprite_height in 0..n {
             let y = (self.get_reg(y_reg) + sprite_height) as usize % SCREEN_HEIGHT;
-            let addr = (self.i_reg + sprite_height as u16) as usize;
-            let row = self.memory[addr];
+            let addr = self.i_reg + sprite_height as u16;
+            let row = self.get_ram(addr);
 
             for x_offset in 0..8 {
                 let x = (self.get_reg(x_reg) + x_offset) as usize % SCREEN_WIDTH;
-                let px = (row & (0x70 >> x_offset)) != 0;
+                
+                if (row & (0b1000_0000 >> x_offset)) != 0 {
+                    let idx = x + SCREEN_WIDTH * y;
 
-                // check to increment the collision register
-                if self.screen[x + SCREEN_WIDTH * y] && px {
-                    self.set_reg(0xFusize, 1);
+                    // check to increment the collision register
+                    if self.screen[idx] {
+                        self.set_reg(0xFusize, 1);
+                    }
+                    
+                    self.screen[idx] ^= true;
                 }
-
-                self.screen[x + SCREEN_WIDTH * y] ^= px;
             }
         }
     }
