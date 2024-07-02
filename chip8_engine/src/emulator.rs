@@ -91,11 +91,39 @@ impl Chip8 {
             (0x9, _, _, 0x0) => self.op_skip_reg_neq(nib2, nib3),
 
             (0x6, _, _, _) => self.op_set_val(nib2, (opcode & 0xFF) as u8),
+            
             (0x7, _, _, _) => self.op_incr_reg(nib2, (opcode & 0xFF) as u8),
-            (0x8, _, _, 0x0) => self.op_mov_reg(nib2, nib3),
+            
+            (0x8, _, _, 0x0) => self.op_set_regs(nib2, nib3),
+            (0x8, _, _, 0x1) => todo!(), // or
+            (0x8, _, _, 0x2) => todo!(), // and
+            (0x8, _, _, 0x3) => todo!(), // xor
+            (0x8, _, _, 0x4) => todo!(), // add
+            (0x8, _, _, 0x5) => todo!(), // subtract
+            (0x8, _, _, 0x6) => todo!(), // shr 
+            (0x8, _, _, 0x7) => todo!(), // subtract other way
+            (0x8, _, _, 0xE) => todo!(), // shl
+
             (0xA, _, _, _) => self.op_mov_i(opcode & 0xFFF),
 
+            (0xC, _, _, _) => todo!(), // rand
+
             (0xD, _, _, _) => self.op_draw(nib2, nib3, nib4),
+
+            (0xE, _, 0x9, 0xE) => todo!(), // skip if key
+            (0xE, _, 0xA, 0x1) => todo!(), // skip ifn key
+            (0xF, _, 0x0, 0xA) => todo!(), // wait key
+
+            (0xF, _, 0x0, 0x7) => todo!(), // get delay timer
+            (0xF, _, 0x1, 0x5) => todo!(), // set delay timer
+            (0xF, _, 0x1, 0x8) => todo!(), // set sound timer
+
+            (0xF, _, 0x1, 0xE) => todo!(), // addi
+
+            (0xF, _, 0x2, 0x9) => todo!(), // get char glyph ptr
+
+            (0xF, _, 0x5, 0x5) => todo!(), // store regs
+            (0xF, _, 0x6, 0x5) => todo!(), // ld regs
 
             (_, _, _, _) => eprintln!("Invalid opcode: {:#04x}", opcode),
         }
@@ -204,7 +232,7 @@ impl Chip8 {
         }
     }
 
-    fn op_mov_reg(&mut self, reg_x: u8, reg_y: u8) {
+    fn op_set_regs(&mut self, reg_x: u8, reg_y: u8) {
         self.set_reg(reg_x, self.get_reg(reg_y));
     }
 
@@ -220,11 +248,16 @@ impl Chip8 {
         self.set_reg(reg, self.get_reg(reg) + val);
     }
 
+    // opcode DXYN
+    // - sprites should wrap around the screen
+    // - if "on" pixel is overwritten, set VF register
+    // - screen buf is stored as an array [bool; 64 * 32] where [x1y1, x2y1...x1y2, x2y2...]
     fn op_draw(&mut self, x_reg: u8, y_reg: u8, n: u8) {
         self.set_reg(0xFusize, 0);
 
         for sprite_height in 0..n {
             let y = (self.get_reg(y_reg) + sprite_height) as usize % SCREEN_HEIGHT;
+
             let addr = self.i_reg + sprite_height as u16;
             let row = self.get_ram(addr);
 
