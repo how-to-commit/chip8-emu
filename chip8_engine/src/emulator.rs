@@ -7,6 +7,27 @@ const NUM_STACK_FRAMES: usize = 16;
 const NUM_INPUT_KEYS: usize = 16;
 const PC_START: usize = 0x200;
 
+const FONT_BEGIN_OFFSET: usize = 0x50;
+const FONT_NEXT_OFFSET: usize = 0x5;
+const FONT_SET: [u8; 80] = [
+    0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
+    0x20, 0x60, 0x20, 0x20, 0x70, // 1
+    0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
+    0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
+    0x90, 0x90, 0xF0, 0x10, 0x10, // 4
+    0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
+    0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
+    0xF0, 0x10, 0x20, 0x40, 0x40, // 7
+    0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
+    0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
+    0xF0, 0x90, 0xF0, 0x90, 0x90, // A
+    0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
+    0xF0, 0x80, 0x80, 0x80, 0xF0, // C
+    0xE0, 0x90, 0x90, 0x90, 0xE0, // D
+    0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
+    0xF0, 0x80, 0xF0, 0x80, 0x80  // F
+];
+
 pub struct Chip8 {
     memory: [u8; RAM_SIZE],
     screen: [bool; SCREEN_WIDTH * SCREEN_HEIGHT],
@@ -30,7 +51,7 @@ pub struct Chip8 {
 
 impl Chip8 {
     pub fn new() -> Self {
-        Self {
+        let mut newself = Self {
             memory: [0; RAM_SIZE],
             screen: [false; SCREEN_WIDTH * SCREEN_HEIGHT],
             program_counter: PC_START,
@@ -41,11 +62,20 @@ impl Chip8 {
             input: [false; NUM_INPUT_KEYS],
             delay_timer: 0,
             sound_timer: 0,
-        }
+        };
+
+        // init fonts
+        newself.load_mem(FONT_BEGIN_OFFSET, &FONT_SET);
+
+        return newself;
     }
 
     pub fn load_rom(&mut self, data: &[u8]) {
-        self.memory[PC_START..(PC_START + data.len())].copy_from_slice(data);
+        self.load_mem(PC_START, data);
+    }
+
+    fn load_mem(&mut self, addr: impl Into<usize> + Copy, data: &[u8]) {
+        self.memory[addr.into() ..(addr.into() + data.len())].copy_from_slice(data);
     }
 
     pub fn get_screen(&mut self) -> &[bool] {
@@ -95,13 +125,13 @@ impl Chip8 {
             (0x7, _, _, _) => self.op_incr_reg(nib2, (opcode & 0xFF) as u8),
             
             (0x8, _, _, 0x0) => self.op_set_regs(nib2, nib3),
-            (0x8, _, _, 0x1) => todo!(), // or
-            (0x8, _, _, 0x2) => todo!(), // and
-            (0x8, _, _, 0x3) => todo!(), // xor
-            (0x8, _, _, 0x4) => todo!(), // add
-            (0x8, _, _, 0x5) => todo!(), // subtract
+            (0x8, _, _, 0x1) => self.op_or(nib2, nib3), // or
+            (0x8, _, _, 0x2) => self.op_and(nib2, nib3), // and
+            (0x8, _, _, 0x3) => self.op_xor(nib2, nib3), // xor
+            (0x8, _, _, 0x4) => self.op_add(nib2, nib3), // add
+            (0x8, _, _, 0x5) => self.op_sub(nib2, nib3, nib2), // subtract
+            (0x8, _, _, 0x7) => self.op_sub(nib3, nib2, nib2), // subtract other way
             (0x8, _, _, 0x6) => todo!(), // shr 
-            (0x8, _, _, 0x7) => todo!(), // subtract other way
             (0x8, _, _, 0xE) => todo!(), // shl
 
             (0xA, _, _, _) => self.op_mov_i(opcode & 0xFFF),
@@ -120,7 +150,7 @@ impl Chip8 {
 
             (0xF, _, 0x1, 0xE) => todo!(), // addi
 
-            (0xF, _, 0x2, 0x9) => todo!(), // get char glyph ptr
+            (0xF, _, 0x2, 0x9) => self.ld_font_addr_i(nib2), // get char glyph ptr
 
             (0xF, _, 0x5, 0x5) => todo!(), // store regs
             (0xF, _, 0x6, 0x5) => todo!(), // ld regs
@@ -147,6 +177,14 @@ impl Chip8 {
 
     fn set_reg(&mut self, reg: impl Into<usize>, value: u8) {
         self.v_regs[reg.into()] = value;
+    }
+
+    fn set_carry_reg(&mut self) {
+        self.v_regs[0xFusize] = 1;
+    }
+
+    fn clear_carry_reg(&mut self) {
+        self.v_regs[0xFusize] = 0;
     }
 
     fn get_ram(&mut self, addr: impl Into<usize>) -> u8 {
@@ -248,12 +286,66 @@ impl Chip8 {
         self.set_reg(reg, self.get_reg(reg) + val);
     }
 
+    fn op_or(&mut self, reg_x: u8, reg_y: u8) {
+        self.set_reg(reg_x, self.get_reg(reg_x) | self.get_reg(reg_y));
+    }
+
+    fn op_and(&mut self, reg_x: u8, reg_y: u8) {
+        self.set_reg(reg_x, self.get_reg(reg_x) & self.get_reg(reg_y));
+    }
+
+    fn op_xor(&mut self, reg_x: u8, reg_y: u8) {
+        self.set_reg(reg_x, self.get_reg(reg_x) ^ self.get_reg(reg_y));
+    }
+
+    fn op_add(&mut self, reg_x: u8, reg_y: u8) {
+        // set VF on overflow
+        self.clear_carry_reg();
+
+        let x = self.get_reg(reg_x);
+        let y = self.get_reg(reg_y);
+
+        match x.checked_add(y) {
+            Some(val) => self.set_reg(reg_x, val), // no overflow
+            None => {
+                self.set_carry_reg();
+                self.set_reg(reg_x, x.wrapping_add(y));
+            }
+        }
+    }
+
+    // opcodes 8XY5 and 8XY7
+    // - for 8XY5, call op_sub(X, Y, X)
+    // - for 8XY7, call op_sub(Y, X, X)
+    // given x - y, sets the carry register VF if x > y, and clears if y > x
+    fn op_sub(&mut self, reg_minuend: u8, reg_subtrahend: u8, reg_result_store: u8) {
+        self.set_carry_reg();
+        
+        let x = self.get_reg(reg_minuend);
+        let y = self.get_reg(reg_subtrahend);
+
+        if y > x {
+            self.clear_carry_reg();
+            self.set_reg(reg_result_store, x.wrapping_sub(y));
+        } else {
+            self.set_reg(reg_result_store, x - y);
+        }
+    }
+
+    // opcodes 8XY6 and 8XYE
+    // - for 8XY6, call op_shf(X, Y, 1)
+    // - for 8XYE, call op_shf(X, Y, -1)
+    fn op_shf(&mut self, reg_x: u8, reg_y: u8, shift: i8) { 
+        let y = self.get_reg(reg_y).wrapping_shr(shift as u32);
+        self.set_reg(reg_x, y);
+    }
+
     // opcode DXYN
     // - sprites should wrap around the screen
     // - if "on" pixel is overwritten, set VF register
     // - screen buf is stored as an array [bool; 64 * 32] where [x1y1, x2y1...x1y2, x2y2...]
     fn op_draw(&mut self, x_reg: u8, y_reg: u8, n: u8) {
-        self.set_reg(0xFusize, 0);
+        self.clear_carry_reg();
 
         for sprite_height in 0..n {
             let y = (self.get_reg(y_reg) + sprite_height) as usize % SCREEN_HEIGHT;
@@ -269,12 +361,24 @@ impl Chip8 {
 
                     // check to increment the collision register
                     if self.screen[idx] {
-                        self.set_reg(0xFusize, 1);
+                        self.set_carry_reg();
                     }
                     
                     self.screen[idx] ^= true;
                 }
             }
         }
+    }
+
+    // load address of chosen glyph, in register vx, to register i
+    // only the lower nibble of vx will be considered
+    fn ld_font_addr_i(&mut self, x_reg: u8) {
+        // type fuckery - offset should actually be a u16, val should be a u8
+
+        let val: usize = (self.get_reg(x_reg) & 0xF).into();
+        let offset: u16 = (FONT_BEGIN_OFFSET + (val * FONT_NEXT_OFFSET)).try_into()
+            .expect("Font offset cannot exceed 4096.");
+        
+        self.i_reg = offset;
     }
 }
