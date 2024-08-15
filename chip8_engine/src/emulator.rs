@@ -131,13 +131,12 @@ impl Chip8 {
             (0x8, _, _, 0x4) => self.op_add(nib2, nib3), // add
             (0x8, _, _, 0x5) => self.op_sub(nib2, nib3, nib2), // subtract
             (0x8, _, _, 0x7) => self.op_sub(nib3, nib2, nib2), // subtract other way
-            (0x8, _, _, 0x6) => todo!(), // shr 
-            (0x8, _, _, 0xE) => todo!(), // shl
+            (0x8, _, _, 0x6) => self.op_shf(nib2, nib3, 1), // shr 
+            (0x8, _, _, 0xE) => self.op_shf(nib2, nib3, -1), // shl
 
             (0xA, _, _, _) => self.op_mov_i(opcode & 0xFFF),
 
             (0xC, _, _, _) => todo!(), // rand
-
             (0xD, _, _, _) => self.op_draw(nib2, nib3, nib4),
 
             (0xE, _, 0x9, 0xE) => todo!(), // skip if key
@@ -335,9 +334,23 @@ impl Chip8 {
     // opcodes 8XY6 and 8XYE
     // - for 8XY6, call op_shf(X, Y, 1)
     // - for 8XYE, call op_shf(X, Y, -1)
-    fn op_shf(&mut self, reg_x: u8, reg_y: u8, shift: i8) { 
-        let y = self.get_reg(reg_y).wrapping_shr(shift as u32);
-        self.set_reg(reg_x, y);
+    fn op_shf(&mut self, reg_x: u8, reg_y: u8, shr_by: i8) { 
+        let y = self.get_reg(reg_y);
+
+        // set VF
+        if shr_by > 0 {
+            self.clear_carry_reg();
+            if (y & 1) == 1 {
+                self.set_carry_reg();
+            }
+        } else if shr_by < 0 {
+            self.clear_carry_reg();
+            if ((y >> 7) & 1) == 1 {
+                self.set_carry_reg();
+            }
+        }
+
+        self.set_reg(reg_x, y.wrapping_shr(shr_by as u32));
     }
 
     // opcode DXYN
