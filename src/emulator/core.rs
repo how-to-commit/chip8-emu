@@ -7,6 +7,7 @@ pub const SCREEN_HEIGHT: usize = 32;
 const RAM_SIZE: usize = 4 * 1024;
 const NUM_V_REGS: usize = 16;
 const STACK_SIZE: usize = 16;
+const NUM_KEYS: usize = 16;
 const START_ADDR: usize = 0x200;
 
 pub struct Chip8 {
@@ -19,6 +20,7 @@ pub struct Chip8 {
     stack_pointer: usize,
 
     screen: Screen,
+    keys: [bool; NUM_KEYS],
 
     delay_timer: u8,
     sound_timer: u8,
@@ -37,6 +39,7 @@ impl Chip8 {
             stack: [0; STACK_SIZE],
             stack_pointer: 0,
             screen: Screen::new(),
+            keys: [false; NUM_KEYS],
             delay_timer: 0,
             sound_timer: 0,
 
@@ -58,11 +61,13 @@ impl Chip8 {
 
         let higher = self.memory[self.program_counter] as u16;
         let lower = self.memory[self.program_counter + 1] as u16;
-        self.program_counter += 2;
         let op = higher << 8 | lower;
-
         self.exec_op(op);
-        return ProgramState::Running;
+
+        return match self.checked_pc_increment(2usize) {
+            Err(_) => ProgramState::Finished,
+            Ok(_) => ProgramState::Running,
+        };
     }
 
     /// call once per frame, returns whether to play sound or not
@@ -99,6 +104,13 @@ impl Chip8 {
         T: Into<usize>,
     {
         self.checked_pc_set(self.program_counter + val.into())
+    }
+
+    fn checked_pc_decrement<T>(&mut self, val: T) -> Result<(), ()>
+    where
+        T: Into<usize>,
+    {
+        self.checked_pc_set(self.program_counter - val.into())
     }
 
     fn get_reg<T>(&mut self, reg: T) -> u8
@@ -145,11 +157,11 @@ impl Chip8 {
             (0x0, 0x0, 0xE, 0xE) => {
                 // ret
                 let return_addr = self.stack_pop();
-                self.checked_pc_set(return_addr);
+                let _ = self.checked_pc_set(return_addr);
             }
             (0x1, _, _, _) => {
                 // 1NNN: jump to addr NNN
-                self.checked_pc_set(op & 0xFFF);
+                let _ = self.checked_pc_set(op & 0xFFF);
             }
             (0x2, _, _, _) => {
                 // 2NNN: call procedure at addr NNN
@@ -158,7 +170,7 @@ impl Chip8 {
                         .try_into()
                         .expect("program counter cannot be more than memory size"),
                 );
-                self.checked_pc_set(op & 0xFFF);
+                let _ = self.checked_pc_set(op & 0xFFF);
             }
             (0x3, _, _, _) => {
                 // 3XNN: skip if reg X value == NN
@@ -263,7 +275,7 @@ impl Chip8 {
             (0xB, _, _, _) => {
                 // BNNN: jump to V0 + NNN
                 let addr = u16::from(self.get_reg(0usize)) + (op & 0xFFF);
-                self.checked_pc_set(addr);
+                let _ = self.checked_pc_set(addr);
             }
             (0xC, _, _, _) => {
                 // CXNN: set X to random AND NN
@@ -297,6 +309,77 @@ impl Chip8 {
                     self.set_reg(0xFusize, 1);
                 } else {
                     self.set_reg(0xFusize, 0);
+                }
+            }
+            (0xE, _, 0x9, 0xE) => {
+                // EX9E: skip if key id in VX is pressed
+                let vx = self.get_reg(nib2);
+                if self.keys[usize::from(vx)] {
+                    let _ = self.checked_pc_increment(2usize);
+                }
+            }
+            (0xE, _, 0xA, 0x1) => {
+                // EXA1: skip if key id in VX is NOT pressed
+                let vx = self.get_reg(nib2);
+                if !self.keys[usize::from(vx)] {
+                    let _ = self.checked_pc_increment(2usize);
+                }
+            }
+            (0xF, _, 0x0, 0xA) => {
+                // FX0A: wait for keypress
+                let mut pressed = false;
+                for (id, is_pressed) in self.keys.iter().enumerate() {
+                    if *is_pressed {
+                        pressed = true;
+                        self.set_reg(nib2, id as u8);
+                        break;
+                    }
+                }
+                // block execution if not pressed
+                if !pressed {
+                    let _ = self.checked_pc_decrement(2usize);
+                }
+            }
+            (0xF, _, 0x0, 0x7) => {
+                // FX07: set VX to value in DT
+                self.set_reg(nib2, self.delay_timer);
+            }
+            (0xF, _, 0x1, 0x5) => {
+                // FX15: set DT to value in VX
+                self.delay_timer = self.get_reg(nib2);
+            }
+            (0xF, _, 0x1, 0x8) => {
+                // FX18: set ST to value in VX
+                self.sound_timer = self.get_reg(nib2);
+            }
+            (0xF, _, 0x1, 0xE) => {
+                // FX1E: increment I reg with value in VX
+                self.i_reg = self.i_reg.wrapping_add(self.get_reg(nib2).into());
+            }
+            (0xF, _, 0x2, 0x9) => {
+                // FX29: set I to font address of character in vx
+                self.i_reg = u16::from(self.get_reg(nib2)) * 5;
+            }
+            (0xF, _, 0x3, 0x3) => {
+                // FX33: set mem @ [I..I+3) (3 bytes) to binary-coded decimal of value in VX
+                let vx = self.get_reg(nib2);
+
+                self.memory[usize::from(self.i_reg)] = vx / 100; // hundreds
+                self.memory[usize::from(self.i_reg)] = (vx / 10) % 10; // tens
+                self.memory[usize::from(self.i_reg)] = vx % 10; // ones
+            }
+            (0xF, _, 0x5, 0x5) => {
+                // FX55: store value of registers from V0 to Vx into memory @ I
+                for idx in 0..=nib2 {
+                    self.memory[usize::from(self.i_reg) + usize::from(idx)] =
+                        self.v_regs[usize::from(idx)];
+                }
+            }
+            (0xF, _, 0x6, 0x5) => {
+                // FX65: load registers V0 to Vx from memory @ I
+                for idx in 0..=nib2 {
+                    self.v_regs[usize::from(idx)] =
+                        self.memory[usize::from(self.i_reg) + usize::from(idx)];
                 }
             }
             (_, _, _, _) => unimplemented!(),
